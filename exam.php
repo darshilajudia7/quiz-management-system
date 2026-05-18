@@ -27,40 +27,79 @@ if (!$exam_details) {
 $duration_seconds = intval($exam_details['duration_minutes']) * 60;
 
 // Save answers 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['current_q_id'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST'){
     $posted_q_id = intval($_POST['current_q_id']);
     
     if (isset($_POST['selected_option']) && !empty($_POST['selected_option'])) {
-        $selected_option = intval($_POST['selected_option']);
-        $save_stmt = mysqli_prepare($conn, "INSERT INTO user_answers (user_id, exam_id, question_id, selected_option_id) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE selected_option_id = ?");
-        mysqli_stmt_bind_param($save_stmt, "iiiii", $user_id, $exam_id, $posted_q_id, $selected_option, $selected_option);
-        mysqli_stmt_execute($save_stmt);
+        $selected_option = isset($_POST['selected_option']) ? intval($_POST['selected_option']) : NULL;
+
+        $save_stmt = mysqli_prepare($conn, "
+            INSERT INTO user_answers 
+            (user_id, exam_id, question_id, selected_option_id) 
+            VALUES (?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE selected_option_id = VALUES(selected_option_id)
+        ");
+
+        mysqli_stmt_bind_param(
+            $save_stmt,
+            "iiii",
+            $user_id,
+            $exam_id,
+            $posted_q_id,
+            $selected_option
+        );
+
+        if (!mysqli_stmt_execute($save_stmt)) {
+            die(mysqli_stmt_error($save_stmt));
+        }
+
         mysqli_stmt_close($save_stmt);
     }
-
+    
     if (isset($_POST['action']) && $_POST['action'] === 'submit_exam') {
+
         $score_query = mysqli_query($conn, "
             SELECT COUNT(*) AS correct_answers 
             FROM user_answers ua
-            JOIN question_options qo ON ua.selected_option_id = qo.id
-            WHERE ua.user_id = $user_id 
-              AND ua.exam_id = $exam_id 
-              AND qo.is_correct = 1
+            JOIN question_options qo 
+            ON ua.selected_option_id = qo.id
+            WHERE ua.user_id = $user_id
+            AND ua.exam_id = $exam_id
+            AND qo.is_correct = 1
         ");
+
+        if (!$score_query) {
+            die(mysqli_error($conn));
+        }
+
         $score_data = mysqli_fetch_assoc($score_query);
+
         $total_score = intval($score_data['correct_answers']);
 
+        
         $save_score_stmt = mysqli_prepare($conn, "
-            INSERT INTO results (user_id, exam_id, score) 
-            VALUES (?, ?, ?) 
-            ON DUPLICATE KEY UPDATE score = ?, submitted_at = NOW()
+            INSERT INTO results (user_id, exam_id, score)
+            VALUES (?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+            score = VALUES(score),
+            submitted_at = NOW()
         ");
-        mysqli_stmt_bind_param($save_score_stmt, "iiii", $user_id, $exam_id, $total_score, $total_score);
-        mysqli_stmt_execute($save_score_stmt);
-        mysqli_stmt_close($save_score_stmt);
 
-        mysqli_query($conn, "DELETE FROM user_answers WHERE user_id = $user_id AND exam_id = $exam_id");
+        if (!$save_score_stmt) {
+            die(mysqli_error($conn));
+        }
 
+        mysqli_stmt_bind_param(
+            $save_score_stmt,
+            "iii",
+            $user_id,
+            $exam_id,
+            $total_score
+        );
+
+        if (!mysqli_stmt_execute($save_score_stmt)) {
+            die(mysqli_stmt_error($save_score_stmt));
+        }
         header("Location: result.php?exam_id=" . $exam_id);
         exit();
     }
@@ -83,12 +122,12 @@ if ($current_index < 0) {
 
 $current_question = isset($all_questions[$current_index]) ? $all_questions[$current_index] : null;
 
-// Mark currently opened question as initialized/skipped if no answer is set yet
+
 if ($current_question) {
     $cq_id = $current_question['id'];
     $check_ans = mysqli_query($conn, "SELECT selected_option_id FROM user_answers WHERE user_id = $user_id AND exam_id = $exam_id AND question_id = $cq_id");
     if (mysqli_num_rows($check_ans) === 0) {
-        mysqli_query($conn, "INSERT IGNORE INTO user_answers (user_id, exam_id, question_id, selected_option_id) VALUES ($user_id, $exam_id, $cq_id, NULL)");
+        mysqli_query($conn, "INSERT INTO user_answers (user_id, exam_id, question_id, selected_option_id) VALUES ($user_id, $exam_id, $cq_id, NULL)");
     }
 }
 
@@ -136,7 +175,7 @@ while ($ans_row = mysqli_fetch_assoc($answers_query)) {
                                 $user_choice = isset($saved_answers[$current_question['id']]) ? $saved_answers[$current_question['id']] : null;
                                 $checked = ($user_choice == $opt['id']) ? 'checked' : '';
                             ?>
-                                <div class="form-check" onclick="this.querySelector('input').click();">
+                                <div class="form-check">
                                     <input type="radio" name="selected_option" id="opt_<?php echo $opt['id']; ?>" value="<?php echo $opt['id']; ?>" class="form-check-input" <?php echo $checked; ?>> 
                                     <label class="form-check-label d-block w-100" for="opt_<?php echo $opt['id']; ?>">
                                         <?php echo htmlspecialchars($opt['option_text']); ?>
